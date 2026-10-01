@@ -2,6 +2,7 @@ import os
 
 import requests
 from fastapi import BackgroundTasks, FastAPI, Request
+import logging
 
 CHATWOOT_URL = os.environ["CHATWOOT_URL"].rstrip("/")
 CHATWOOT_TOKEN = os.environ["CHATWOOT_TOKEN"]
@@ -12,6 +13,7 @@ STT_MODEL = os.getenv("STT_MODEL", "whisper-large-v3-turbo")
 STT_LANG = os.getenv("STT_LANG", "es")  # vacío = autodetectar
 
 app = FastAPI()
+logger = logging.getLogger("uvicorn.error")
 
 
 def transcribe(data_url: str) -> str:
@@ -61,6 +63,13 @@ def process(payload: dict):
 @app.post("/webhook")
 async def webhook(request: Request, bg: BackgroundTasks):
     payload = await request.json()
+    atts = [a.get("file_type") for a in payload.get("attachments") or []]
+    logger.info(
+        "event=%s type=%s attachments=%s",
+        payload.get("event"),
+        payload.get("message_type"),
+        atts,
+    )
     if (
         payload.get("event") == "message_created"
         and payload.get("message_type") == "incoming"
