@@ -1,11 +1,15 @@
 import os
 
 import requests
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query
 import logging
+import hmac
+from urllib.parse import urlparse
 
 CHATWOOT_URL = os.environ["CHATWOOT_URL"].rstrip("/")
 CHATWOOT_TOKEN = os.environ["CHATWOOT_TOKEN"]
+
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
 STT_URL = os.getenv("STT_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
 STT_KEY = os.environ["STT_KEY"]
@@ -61,7 +65,9 @@ def process(payload: dict):
 
 
 @app.post("/webhook")
-async def webhook(request: Request, bg: BackgroundTasks):
+async def webhook(request: Request, bg: BackgroundTasks, token: str = Query("")):
+    if not hmac.compare_digest(token, WEBHOOK_SECRET):
+        raise HTTPException(status_code=401)
     payload = await request.json()
     atts = [a.get("file_type") for a in payload.get("attachments") or []]
     logger.info(
@@ -75,4 +81,9 @@ async def webhook(request: Request, bg: BackgroundTasks):
         and payload.get("message_type") == "incoming"
     ):
         bg.add_task(process, payload)
+    return {"ok": True}
+
+
+@app.get("/health")
+def health():
     return {"ok": True}
