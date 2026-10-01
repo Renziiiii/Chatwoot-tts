@@ -8,8 +8,11 @@ from urllib.parse import urlparse
 
 CHATWOOT_URL = os.environ["CHATWOOT_URL"].rstrip("/")
 CHATWOOT_TOKEN = os.environ["CHATWOOT_TOKEN"]
+CHATWOOT_HOST = urlparse(CHATWOOT_URL).netloc
 
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
+
+MAX_AUDIO_BYTES = 20 * 1024 * 1024  # 20 MB
 
 STT_URL = os.getenv("STT_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
 STT_KEY = os.environ["STT_KEY"]
@@ -20,16 +23,38 @@ app = FastAPI()
 logger = logging.getLogger("uvicorn.error")
 
 
-def transcribe(data_url: str) -> str:
-    audio = requests.get(data_url, timeout=60)
-    audio.raise_for_status()
+def download_audio(data_url: str) -> bytes:
+    """Baja el audio. Único punto que toca la red con una URL de afuera: se valida acá."""
+    if urlparse(data_url).netloc != CHATWOOT_HOST:
+        raise ValueError("el audio no viene de Chatwoot")
+    with requests.get(data_url, timeout=60, allow_redirects=False, stream=True) as audio:
+        if audio.is_redirect:
+            raise ValueError("el audio redirige a otro host, no lo sigo")
+        audio.raise_for_status()
+        # Chequeo barato: si el servidor ya declaró el tamaño, cortamos sin bajar nada.
+        declared = audio.headers.get("Content-Length", "")
+        if declared.isdigit() and int(declared) > MAX_AUDIO_BYTES:
+            raise ValueError("audio demasiado grande")
+        # Chequeo real: bajamos de a pedacitos y cortamos apenas nos pasamos.
+        chunks = []
+        received = 0
+        for chunk in audio.iter_content(chunk_size=64 * 1024):
+            received += len(chunk)
+            if received > MAX_AUDIO_BYTES:
+                raise ValueError("audio demasiado grande")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def transcribe(audio: bytes) -> str:
+    """Convierte bytes de audio en texto usando Groq. No maneja URLs ni descargas."""
     data = {"model": STT_MODEL, "response_format": "text"}
     if STT_LANG:
         data["language"] = STT_LANG
     r = requests.post(
         STT_URL,
         headers={"Authorization": f"Bearer {STT_KEY}"},
-        files={"file": ("audio.ogg", audio.content, "audio/ogg")},
+        files={"file": ("audio.ogg", audio, "audio/ogg")},
         data=data,
         timeout=120,
     )
@@ -58,7 +83,8 @@ def process(payload: dict):
         if att.get("file_type") != "audio":
             continue
         try:
-            text = transcribe(att["data_url"]) or "(audio sin voz detectada)"
+            audio = download_audio(att["data_url"])
+            text = transcribe(audio) or "(audio sin voz detectada)"
         except Exception as e:
             text = f"(error al transcribir: {e})"
         post_note(account_id, conversation_id, text)
