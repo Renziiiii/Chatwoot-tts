@@ -27,7 +27,9 @@ def download_audio(data_url: str) -> bytes:
     """Baja el audio. Único punto que toca la red con una URL de afuera: se valida acá."""
     if urlparse(data_url).netloc != CHATWOOT_HOST:
         raise ValueError("el audio no viene de Chatwoot")
-    with requests.get(data_url, timeout=60, allow_redirects=False, stream=True) as audio:
+    with requests.get(
+        data_url, timeout=60, allow_redirects=False, stream=True
+    ) as audio:
         if audio.is_redirect:
             raise ValueError("el audio redirige a otro host, no lo sigo")
         audio.raise_for_status()
@@ -66,7 +68,7 @@ def post_note(account_id: int, conversation_id: int, text: str):
     url = f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages"
     requests.post(
         url,
-        headers={"api_access_token": CHATWOOT_TOKEN},
+        headers={"api-access-token": CHATWOOT_TOKEN},
         json={
             "content": f"🎤 Transcripción:\n{text}",
             "message_type": "outgoing",
